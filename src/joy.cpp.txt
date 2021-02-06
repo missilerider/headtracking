@@ -1,0 +1,114 @@
+#include <Arduino.h>
+#include "Joystick.h"
+
+#include <ClickEncoder.h>
+#include <TimerOne.h>
+
+Joystick_ Joystick(
+  JOYSTICK_DEFAULT_REPORT_ID,
+  JOYSTICK_TYPE_JOYSTICK,
+  JOYSTICK_DEFAULT_BUTTON_COUNT,
+  JOYSTICK_DEFAULT_HATSWITCH_COUNT,
+  true, // xAxis
+  true, // yAxis
+  true, // zAxis
+  true, // rxAxis
+  true, // ryAxis
+  true, // rzAxis
+  true, // Rudder
+  true, // Throttle
+  true, // Accel
+  true, // Brake
+  true); // Steering
+
+ClickEncoder *encoder;
+
+unsigned long lastTime = 0;
+unsigned long newTime;
+unsigned int xAxis;
+unsigned char rzAxis;
+
+int16_t last, value;
+
+void timerIsr() {
+  encoder->service();
+
+  value += encoder->getValue();
+}
+
+void setupEncoder() {
+  encoder = new ClickEncoder(7, 8, 9);
+
+  Timer1.initialize(1000);
+  Timer1.attachInterrupt(timerIsr); 
+}
+
+void setupJoystick() {
+  Joystick.setXAxisRange(0, 1023);
+  Joystick.setRzAxisRange(0, 255);
+
+  Joystick.setSteeringRange(0, 1023);
+
+  Joystick.begin(false); // autoSendMode = false
+}
+
+void setup() {
+  Serial1.begin(9600);
+
+  //setupJoystick();
+  setupEncoder();
+  
+  last = -1;
+}
+
+void loop() {
+  int p = analogRead(A0);
+  //value += encoder->getValue();
+
+  xAxis = p;
+  rzAxis = (unsigned char)(p / 4);
+
+  Joystick.setXAxis(xAxis);
+  Joystick.setRzAxis(rzAxis);
+  Joystick.setSteering(xAxis);
+  Joystick.setRudder(xAxis);
+  Joystick.setRzAxis(rzAxis);
+
+  if(xAxis > 0) Joystick.pressButton(1);
+  else Joystick.releaseButton(1);
+
+  newTime = millis();
+
+  if(newTime - lastTime > 200) {
+    Serial1.print(p);
+    Serial1.print(" ");
+    Serial1.println(xAxis);
+    lastTime = newTime;
+  }
+
+  if (value != last) {
+    last = value;
+    Serial1.print("Encoder Value: ");
+    Serial1.println(value);
+  }
+
+  ClickEncoder::Button b = encoder->getButton();
+  if (b != ClickEncoder::Open) {
+    Serial1.print("Button: ");
+    #define VERBOSECASE(label) case label: Serial1.println(#label); break;
+    switch (b) {
+      VERBOSECASE(ClickEncoder::Pressed);
+      VERBOSECASE(ClickEncoder::Held)
+      VERBOSECASE(ClickEncoder::Released)
+      VERBOSECASE(ClickEncoder::Clicked)
+      case ClickEncoder::DoubleClicked:
+          Serial1.println("ClickEncoder::DoubleClicked");
+          encoder->setAccelerationEnabled(!encoder->getAccelerationEnabled());
+          Serial1.print("  Acceleration is ");
+          Serial1.println((encoder->getAccelerationEnabled()) ? "enabled" : "disabled");
+        break;
+    }
+  }
+
+  Joystick.sendState();
+}

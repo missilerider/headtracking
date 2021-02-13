@@ -1,0 +1,175 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+
+double xPos = 0, yPos = 0, zPos = 0, headingVel = 0;
+uint16_t BNO055_SAMPLERATE_DELAY_MS = 10; //how often to read data from the board
+uint16_t PRINT_DELAY_MS = 500; // how often to print the data
+uint16_t printCount = 0; //counter to avoid printing every 10MS sample
+
+//velocity = accel*dt (dt in seconds)
+//position = 0.5*accel*dt^2
+double ACCEL_VEL_TRANSITION =  (double)(BNO055_SAMPLERATE_DELAY_MS) / 1000.0;
+double ACCEL_POS_TRANSITION = 0.5 * ACCEL_VEL_TRANSITION * ACCEL_VEL_TRANSITION;
+double DEG_2_RAD = 0.01745329251; //trig functions require radians, BNO055 outputs degrees
+
+// Check I2C device address and correct line below (by default address is 0x29 or 0x28)
+//                                   id, address
+Adafruit_BNO055 bno;
+
+void displayCalStatus(void)
+{
+  /* Get the four calibration values (0..3) */
+  /* Any sensor data reporting 0 should be ignored, */
+  /* 3 means 'fully calibrated" */
+  uint8_t system, gyro, accel, mag;
+  system = gyro = accel = mag = 0;
+  bno.getCalibration(&system, &gyro, &accel, &mag);
+ 
+  /* The data should be ignored until the system calibration is > 0 */
+  Serial1.print("\t");
+  if (!system)
+  {
+    Serial1.print("! ");
+  }
+ 
+  /* Display the individual values */
+  Serial1.print("Sys:");
+  Serial1.print(system, DEC);
+  Serial1.print(" G:");
+  Serial1.print(gyro, DEC);
+  Serial1.print(" A:");
+  Serial1.print(accel, DEC);
+  Serial1.print(" M:");
+  Serial1.println(mag, DEC);
+}
+
+void setup(void)
+{
+  Serial1.begin(9600);
+
+  //Wire.setClock(400000); // Allow for 1000us of clock stretching
+
+  delay(1000);
+
+  bno = Adafruit_BNO055(55, 0x29);
+
+  while(!bno.begin())
+  {
+    Serial1.println ("No BNO055 detected");
+    delay(5000);
+  }
+
+  delay(1000);
+
+  bno.setExtCrystalUse(true);
+
+  bool cal = false;
+/*
+  uint8_t system, gyro, accel, mag;
+  system = gyro = accel = mag = 0;
+  while(!cal) {
+    bno.getCalibration(&system, &gyro, &accel, &mag);
+    if(system >= 3) {
+      Serial1.println("CALIB OK");
+      Serial1.print("Sys:");
+      Serial1.print(system, DEC);
+      Serial1.print(" G:");
+      Serial1.print(gyro, DEC);
+      Serial1.print(" A:");
+      Serial1.print(accel, DEC);
+      Serial1.print(" M:");
+      Serial1.println(mag, DEC);
+      cal = true;
+      break;
+    }
+
+    delay(1000);
+    Serial1.print(system, DEC);
+    Serial1.print(gyro, DEC);
+    Serial1.print(accel, DEC);
+    Serial1.print(mag, DEC);
+    Serial1.print("|");
+  }*/
+}
+
+void loop(void)
+{
+  //
+  unsigned long tStart = micros();
+  sensors_event_t orientationData , linearAccelData;
+  bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
+  //  bno.getEvent(&angVelData, Adafruit_BNO055::VECTOR_GYROSCOPE);
+  bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
+
+  xPos = xPos + ACCEL_POS_TRANSITION * linearAccelData.acceleration.x;
+  yPos = yPos + ACCEL_POS_TRANSITION * linearAccelData.acceleration.y;
+  zPos = zPos + ACCEL_POS_TRANSITION * linearAccelData.acceleration.z;
+
+  // velocity of sensor in the direction it's facing
+  headingVel = ACCEL_VEL_TRANSITION * linearAccelData.acceleration.x / cos(DEG_2_RAD * orientationData.orientation.x);
+
+  if (printCount * BNO055_SAMPLERATE_DELAY_MS >= PRINT_DELAY_MS) {
+    //enough iterations have passed that we can print the latest data
+    Serial1.print("Heading: ");
+    Serial1.print(orientationData.orientation.x);
+    Serial1.print("\t");
+    Serial1.print(orientationData.orientation.y);
+    Serial1.print("\t");
+    Serial1.println(orientationData.orientation.z);
+    Serial1.print("Position: ");
+    Serial1.print(xPos);
+    Serial1.print("\t");
+    Serial1.print(yPos);
+    Serial1.print("\t");
+    Serial1.println(zPos);
+    Serial1.print("Speed: ");
+    Serial1.println(headingVel);
+    Serial1.println("-------");
+
+    printCount = 0;
+  }
+  else {
+    printCount = printCount + 1;
+  }
+
+
+
+  while ((micros() - tStart) < (BNO055_SAMPLERATE_DELAY_MS * 1000))
+  {
+    //poll until the next sample is ready
+  }
+}
+
+void printEvent(sensors_event_t* event) {
+  Serial1.println();
+  Serial1.print(event->type);
+  double x = -1000000, y = -1000000 , z = -1000000; //dumb values, easy to spot problem
+  if (event->type == SENSOR_TYPE_ACCELEROMETER) {
+    x = event->acceleration.x;
+    y = event->acceleration.y;
+    z = event->acceleration.z;
+  }
+  else if (event->type == SENSOR_TYPE_ORIENTATION) {
+    x = event->orientation.x;
+    y = event->orientation.y;
+    z = event->orientation.z;
+  }
+  else if (event->type == SENSOR_TYPE_MAGNETIC_FIELD) {
+    x = event->magnetic.x;
+    y = event->magnetic.y;
+    z = event->magnetic.z;
+  }
+  else if ((event->type == SENSOR_TYPE_GYROSCOPE) || (event->type == SENSOR_TYPE_ROTATION_VECTOR)) {
+    x = event->gyro.x;
+    y = event->gyro.y;
+    z = event->gyro.z;
+  }
+
+  Serial1.print(": x= ");
+  Serial1.print(x);
+  Serial1.print(" | y= ");
+  Serial1.print(y);
+  Serial1.print(" | z= ");
+  Serial1.println(z);
+}

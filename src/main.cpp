@@ -1,6 +1,9 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
+#include <EEPROM.h>
+
+#define PIN_BUTTON 10
 
 double xPos = 0, yPos = 0, headingVel = 0;
 uint16_t BNO055_SAMPLERATE_DELAY_MS = 10; //how often to read data from the board
@@ -17,7 +20,97 @@ double DEG_2_RAD = 0.01745329251; //trig functions require radians, BNO055 outpu
 //                                   id, address
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x29);
 
-uint8_t calibData;
+uint8_t calibData[22], lastCalibData[22];
+imu::Quaternion q, qDelta, qTmp;
+imu::Vector<3> refY, refZ;
+imu::Vector<3> headY, headZ;
+
+int n;
+
+void calcHeadPos() {
+  qTmp = q * qDelta;
+
+  headY = qTmp.rotateVector(refY);
+  headZ = qTmp.rotateVector(refZ);
+}
+
+void setDelta() {
+  qDelta = q.conjugate();
+}
+
+void saveCalibData() {
+  for (n = 0; n < 22; n++)
+    EEPROM.write(n, calibData[n]);
+
+  EEPROM.write(23, 123);
+}
+
+void saveDouble(int addr, double data) {
+  unsigned char* p = (unsigned char*)&data;
+  EEPROM.write(addr++, *p++);
+  EEPROM.write(addr++, *p++);
+  EEPROM.write(addr++, *p++);
+  EEPROM.write(addr++, *p++);
+  EEPROM.write(addr++, *p++);
+  EEPROM.write(addr++, *p++);
+  EEPROM.write(addr++, *p++);
+  EEPROM.write(addr++, *p++);
+}
+
+double loadDouble(int addr) {
+  double ret;
+  unsigned char *p = (unsigned char*)&ret;
+  *p++ = EEPROM.read(addr++);
+  *p++ = EEPROM.read(addr++);
+  *p++ = EEPROM.read(addr++);
+  *p++ = EEPROM.read(addr++);
+  *p++ = EEPROM.read(addr++);
+  *p++ = EEPROM.read(addr++);
+  *p++ = EEPROM.read(addr++);
+  *p++ = EEPROM.read(addr++);
+
+  return ret;
+}
+
+void saveDeltaData() {
+  EEPROM.write(24, 123);
+
+  saveDouble(25, qDelta.w());
+  saveDouble(25+8, qDelta.x());
+  saveDouble(25+16, qDelta.y());
+  saveDouble(25+24, qDelta.z());
+}
+
+void loadCalibData() {
+  if(EEPROM.read(23) != 123) {
+    Serial1.println("READ CHUNGO!!!!!!!!!!!!!!!!!");
+    return;
+  }
+
+  Serial1.println("CALIB DATA OK");
+
+  for (n = 0; n < 22; n++) {
+    calibData[n] = EEPROM.read(n);
+    lastCalibData[n] = calibData[n];
+  }
+}
+
+void loadDeltaData() {
+  if(EEPROM.read(24) != 123) {
+    Serial1.println("READ DELTA CHUNGO!!!!!!!!!!!!!!!!!");
+    return;
+  }
+
+  Serial1.println("DELTA DATA OK");
+
+  qDelta = imu::Quaternion(
+    loadDouble(25), 
+    loadDouble(25+8), 
+    loadDouble(25+16), 
+    loadDouble(25+24)
+    );
+}
+
 
 void setup(void)
 {
@@ -28,7 +121,24 @@ void setup(void)
     while (1);
   }
 
+  pinMode(PIN_BUTTON, INPUT_PULLUP);
+
   bno.setMode(Adafruit_BNO055::OPERATION_MODE_NDOF);
+
+  memset(calibData, 0, 22);
+  memset(lastCalibData, 0, 22);
+
+  loadCalibData();
+
+  bno.setSensorOffsets(calibData);
+
+  // Cabeza en cualquier sitio
+  refY = imu::Vector<3>(0.0, 512.0, 0.0);
+  refZ = imu::Vector<3>(0.0, 0.0, 512.0);
+
+  qDelta = imu::Quaternion();
+
+  loadDeltaData();
 
   delay(1000);
 }
@@ -37,42 +147,53 @@ void loop(void)
 {
   //
   unsigned long tStart = micros();
-  //sensors_event_t orientationData , linearAccelData;
-  //bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
-  //  bno.getEvent(&angVelData, Adafruit_BNO055::VECTOR_GYROSCOPE);
-  //bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
   
   uint8_t sys, gyro, accel, mag = 0;
   bno.getCalibration(&sys, &gyro, &accel, &mag);
 
-  imu::Quaternion q = bno.getQuat();
-  
+  q = bno.getQuat();
+
+  if(!digitalRead(PIN_BUTTON)) {
+    setDelta();
+    Serial1.print("*");
+    saveDeltaData();
+  }
 
   if (printCount * BNO055_SAMPLERATE_DELAY_MS >= PRINT_DELAY_MS) {
-    //enough iterations have passed that we can print the latest data
-    Serial1.print("Q: ");
-    Serial1.print(q.x());
-    Serial1.print(", ");
-    Serial1.print(q.y());
-    Serial1.print(", ");
-    Serial1.print(q.z());
-    Serial1.print(", ");
-    Serial1.println(q.w());
-    Serial1.print("Cal:\t");
+    //setDelta();
+
+    calcHeadPos();
+    
+    Serial1.print("X: ");
+    Serial1.print(headZ.x(), DEC);
+    Serial1.print("\tY: ");
+    Serial1.print(headY.x(), DEC);
+    Serial1.print("\tZ: ");
+    Serial1.print(headZ.y(), DEC);
+    Serial1.println();
+
+    Serial1.print("Cal:\tS: ");
     Serial1.print(sys, DEC);
-    Serial1.print("\t");
+    Serial1.print("\tG: ");
     Serial1.print(gyro, DEC);
-    Serial1.print("\t");
+    Serial1.print("\tA: ");
     Serial1.print(accel, DEC);
-    Serial1.print("\t");
+    Serial1.print("\tM: ");
     Serial1.print(mag, DEC);
 
     if(sys + gyro + accel + mag == 3 * 4) {
-        Serial1.print("\tCALIB OK!");
+        Serial1.print("\t[CALIB]");
 
-        bno.getSensorOffsets(&calibData);
+        bno.getSensorOffsets(calibData);
 
+        if(memcmp(lastCalibData, calibData, 22) != 0) {
 
+          memcpy(lastCalibData, calibData, 22);
+
+          saveCalibData();
+
+          Serial1.print("\t[SAVE]");
+        }
 
     }
 

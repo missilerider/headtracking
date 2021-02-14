@@ -5,6 +5,7 @@
 #include "Joystick.h"
 
 #define PIN_BUTTON 10
+#define MAX_AXIS   16384
 
 double xPos = 0, yPos = 0, headingVel = 0;
 uint16_t BNO055_SAMPLERATE_DELAY_MS = 10; //how often to read data from the board
@@ -30,6 +31,8 @@ imu::Vector<3> refY, refZ;
 imu::Vector<3> headY, headZ;
 
 unsigned long lastDeltaSave = 0, lastCalibSave = 0;
+bool setButtons = true;
+bool lastButton = false;
 
 int n;
 
@@ -40,10 +43,10 @@ Joystick_ Joystick(
   0, //JOYSTICK_DEFAULT_HATSWITCH_COUNT,
   true, // xAxis
   true, // yAxis
-  true, // zAxis
+  false, // zAxis
   false, // rxAxis
   false, // ryAxis
-  false, // rzAxis
+  true, // rzAxis
   false, // Rudder
   false, // Throttle
   false, // Accel
@@ -159,16 +162,16 @@ void setup(void)
   bno.setSensorOffsets(calibData);
 
   // Cabeza en cualquier sitio
-  refY = imu::Vector<3>(0.0, 512.0, 0.0);
-  refZ = imu::Vector<3>(0.0, 0.0, 512.0);
+  refY = imu::Vector<3>(0.0, (double)MAX_AXIS, 0.0);
+  refZ = imu::Vector<3>(0.0, 0.0, (double)MAX_AXIS);
 
   qDelta = imu::Quaternion();
 
   loadDeltaData();
 
-  Joystick.setXAxisRange(-512, 512);
-  Joystick.setYAxisRange(-512, 512);
-  Joystick.setZAxisRange(-512, 512);
+  Joystick.setXAxisRange(-MAX_AXIS, MAX_AXIS);
+  Joystick.setYAxisRange(-MAX_AXIS, MAX_AXIS);
+  Joystick.setRzAxisRange(-MAX_AXIS, MAX_AXIS);
 
   delay(1000);
 }
@@ -193,6 +196,13 @@ void loop(void)
     saveDeltaData();
 
     lastDeltaSave = tStart;
+
+    if(!lastButton) {
+      setButtons = !setButtons;
+      lastButton = true;
+    }
+  } else {
+    lastButton = false;
   }
 
   calcHeadPos();
@@ -215,17 +225,24 @@ void loop(void)
 
   Joystick.setXAxis((int16_t)headY.x());
   Joystick.setYAxis((int16_t)headZ.x());
-  Joystick.setZAxis((int16_t)headZ.y());
+  Joystick.setRzAxis((int16_t)headZ.y());
 
-  Joystick.setButton(0, sys != 3);
-  Joystick.setButton(1, gyro != 3);
-  Joystick.setButton(2, accel != 3);
-  Joystick.setButton(3, mag != 3);
+  if(setButtons) {
+    Joystick.setButton(0, sys != 3);
+    Joystick.setButton(1, gyro != 3);
+    Joystick.setButton(2, accel != 3);
+    Joystick.setButton(3, mag != 3);
+  } else {
+    Joystick.setButton(0, false);
+    Joystick.setButton(1, false);
+    Joystick.setButton(2, false);
+    Joystick.setButton(3, false);
+  }
 
   Joystick.sendState();
 
 
-  if (BNO055_SAMPLERATE_DELAY_MS >= PRINT_DELAY_MS) {
+/*  if (BNO055_SAMPLERATE_DELAY_MS >= PRINT_DELAY_MS) {
 
     Serial1.print("X: ");
     Serial1.print(headZ.x(), DEC);
@@ -244,9 +261,9 @@ void loop(void)
     Serial1.print("\tM: ");
     Serial1.print(mag, DEC);
 
-  if(sys + gyro + accel + mag == 3 * 4) {
-      Serial1.print("\t[CALIB]");
-  }
+    if(sys + gyro + accel + mag == 3 * 4) {
+        Serial1.print("\t[CALIB]");
+    }
 
     Serial1.println();
     Serial1.println("-------");
@@ -255,7 +272,7 @@ void loop(void)
   }
   else {
     printCount = printCount + 1;
-  }
+  }*/
 
   while ((micros() - tStart) < (BNO055_SAMPLERATE_DELAY_MS * 1000))
   {

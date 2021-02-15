@@ -4,10 +4,11 @@
 #include <EEPROM.h>
 #include "Joystick.h"
 
-#define PIN_BUTTON 10
-#define MAX_AXIS   16384
+#include "headProcessing.h"
 
-double xPos = 0, yPos = 0, headingVel = 0;
+#define PIN_BUTTON 10
+#define MAX_AXIS   32767.0
+
 uint16_t BNO055_SAMPLERATE_DELAY_MS = 10; //how often to read data from the board
 uint16_t PRINT_DELAY_MS = 500; // how often to print the data
 uint16_t printCount = 0; //counter to avoid printing every 10MS sample
@@ -33,6 +34,8 @@ imu::Vector<3> headY, headZ;
 unsigned long lastDeltaSave = 0, lastCalibSave = 0;
 bool setButtons = true;
 bool lastButton = false;
+
+double posX, posY, posZ;
 
 int n;
 
@@ -109,7 +112,7 @@ void saveDeltaData() {
 
 void loadCalibData() {
   if(EEPROM.read(23) != 123) {
-    Serial1.println("READ CHUNGO!!!!!!!!!!!!!!!!!");
+    Serial1.println("READ CALIB CHUNGO!!!!!!!!!!!!!!!!!");
     return;
   }
 
@@ -146,7 +149,7 @@ void setup(void)
   Serial1.begin(115200);
   if (!bno.begin())
   {
-    Serial1.print("No BNO055 detected");
+    Serial1.println("No BNO055 detected");
     while (1);
   }
 
@@ -162,8 +165,10 @@ void setup(void)
   bno.setSensorOffsets(calibData);
 
   // Cabeza en cualquier sitio
-  refY = imu::Vector<3>(0.0, (double)MAX_AXIS, 0.0);
-  refZ = imu::Vector<3>(0.0, 0.0, (double)MAX_AXIS);
+//  refY = imu::Vector<3>(0.0, (double)MAX_AXIS, 0.0);
+//  refZ = imu::Vector<3>(0.0, 0.0, (double)MAX_AXIS);
+  refY = imu::Vector<3>(0, 1, 0);
+  refZ = imu::Vector<3>(0, 0, 1);
 
   qDelta = imu::Quaternion();
 
@@ -174,13 +179,38 @@ void setup(void)
   Joystick.setRzAxisRange(-MAX_AXIS, MAX_AXIS);
 
   delay(1000);
+
+  if(resetButtonPressed()) {
+    Serial1.println("JOY CALIB MODE");
+
+    while(1) {
+      if(resetButtonPressed()) {
+        if((int)(millis() / 500.0) % 2 == 0) {
+          Joystick.setXAxis(MAX_AXIS);
+          Joystick.setYAxis(MAX_AXIS);
+          Joystick.setRzAxis(MAX_AXIS);
+        } else {
+          Joystick.setXAxis(-MAX_AXIS);
+          Joystick.setYAxis(-MAX_AXIS);
+          Joystick.setRzAxis(-MAX_AXIS);
+        }
+      } else {
+        Joystick.setXAxis(0);
+        Joystick.setYAxis(0);
+        Joystick.setRzAxis(0);
+      }
+
+      Joystick.sendState();
+    }
+  }
+
+  setAxis();
 }
 
 void loop(void)
 {
-  //
   unsigned long tStart = micros();
-  
+
   uint8_t sys, gyro, accel, mag = 0;
   bno.getCalibration(&sys, &gyro, &accel, &mag);
 
@@ -223,9 +253,11 @@ void loop(void)
 
   }
 
-  Joystick.setXAxis((int16_t)headY.x());
-  Joystick.setYAxis((int16_t)headZ.x());
-  Joystick.setRzAxis((int16_t)headZ.y());
+  processHead(headY.x(), headZ.x(), headZ.y(), &posX, &posY, &posZ);
+  
+  Joystick.setXAxis(posX * MAX_AXIS);
+  Joystick.setYAxis(posY * -MAX_AXIS);
+  Joystick.setRzAxis(posZ * MAX_AXIS);
 
   if(setButtons) {
     Joystick.setButton(0, sys != 3);

@@ -8,6 +8,7 @@ struct axisData_t {
     double lastPos; // Última posición devuelta
 
     double movDelta; // % de movimiento aplicado en cada loop sobre el desplazado real (0f, 1f]
+    double movExp; // Exponencial del movimiento (>0). Cambia X por X^movExp respetando el signo (claro)
 
     double minRealMovStatic; // Más de esto activa el movimiento
     double maxDeltaStatic; // Menos de esto desactiva el movimiento
@@ -27,33 +28,43 @@ void setAxis() {
 
     axisDataX.name = 'X';
     axisDataX.movDelta = 0.2f;
-    axisDataX.minRealMovStatic = 0.01;
-    axisDataX.maxDeltaStatic = 0.0015;
+    axisDataX.movExp = 2;
+    axisDataX.minRealMovStatic = 0.01 * 0;
+    axisDataX.maxDeltaStatic = 0.0015 * 0;
     axisDataX.headRange = 0.3;
 
     axisDataY.name = 'Y';
     axisDataY.movDelta = 0.2f;
-    axisDataY.minRealMovStatic = 0.01;
-    axisDataY.maxDeltaStatic = 0.0015;
+    axisDataY.movExp = 2;
+    axisDataY.minRealMovStatic = 0.01 * 0;
+    axisDataY.maxDeltaStatic = 0.0015 * 0;
     axisDataY.headRange = 0.25;
 
     axisDataZ.name = 'Z';
     axisDataZ.movDelta = 0.08f;
+    axisDataZ.movExp = 1;
     axisDataZ.minRealMovStatic = 0.02;
     axisDataZ.maxDeltaStatic = 0.03;
     axisDataZ.headRange = 0.25;
 }
 
 // Transforma un valor global a uno que tenga sentido en movimientos de cabeza, para ser fino y no saltar
+// Cambién cambia el valor a [-1, 1]
 double clampAxis(double val, axisData_t *axisData) {
     double ret;
+    bool positive;
     
     ret = val / axisData->headRange;
+    ret /= PI_2;
 
-    if(ret > PI_2) return PI_2;
-    if(ret < -PI_2) return -PI_2;
+    if(ret > 1) return 1;
+    if(ret < -1) return -1;
 
-    return ret;
+    positive = (ret >= 0);
+
+    ret = pow(abs(ret), axisData->movExp);
+
+    return positive ? ret : -ret;
 }
 
 /**
@@ -65,6 +76,8 @@ double clampAxis(double val, axisData_t *axisData) {
 double processAxis(double val, unsigned long timeDelta, axisData_t *axisData) {
     double delta = val - axisData->lastPos;
     double deltaAbs = delta > 0 ? delta : -delta;
+
+    axisData->isStatic = false; // TEST
 
     // Si se mueve mucho, activa
     if(axisData->isStatic && (deltaAbs > axisData->minRealMovStatic)) {
@@ -97,9 +110,9 @@ double processAxis(double val, unsigned long timeDelta, axisData_t *axisData) {
 void processHead(double x, double y, double z, double *outX, double *outY, double *outZ) {
     unsigned long timeDelta = micros() - lastAxisUpdate;
 
-    *outX = processAxis(asin(x), timeDelta, &axisDataX) / PI_2;
-    *outY = processAxis(asin(y), timeDelta, &axisDataY) / PI_2;
-    *outZ = processAxis(asin(z), timeDelta, &axisDataZ) / PI_2;
+    *outX = processAxis(asin(x), timeDelta, &axisDataX);
+    *outY = processAxis(asin(y), timeDelta, &axisDataY);
+    *outZ = processAxis(asin(z), timeDelta, &axisDataZ);
 
     lastAxisUpdate += timeDelta;
 }
